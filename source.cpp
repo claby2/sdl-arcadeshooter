@@ -15,6 +15,8 @@ const int SCREEN_HEIGHT = 480;
 SDL_Window* gWindow = NULL;
 SDL_Renderer* gRenderer = NULL;
 
+const int ENEMY_AMOUNT = 10;
+
 class LTexture {
 	public:
 		LTexture() {
@@ -78,6 +80,7 @@ class LTexture {
 
 LTexture gPlayerTexture;
 LTexture gProjectileTexture;
+LTexture gEnemyTexture;
 
 class Projectile {
     public:
@@ -182,6 +185,49 @@ class Player {
             int mVelX, mVelY;
 };
 
+class Enemy {
+    public:
+        static const int ENEMY_WIDTH = 20;
+        static const int ENEMY_HEIGHT = 20;
+        static const int ENEMY_VEL = 1;
+        float mPosX, mPosY;
+        float Dlen;
+
+        Enemy(int playerX, int playerY) {
+            if(rand() % 2 == 0){ // Vary X
+                mPosX = rand() % SCREEN_WIDTH;
+                mPosY = rand() % 2 == 0 ? -ENEMY_HEIGHT: SCREEN_HEIGHT + ENEMY_HEIGHT;
+            } else { // Vary Y
+                mPosX = rand() % 2 == 0 ? -ENEMY_WIDTH: SCREEN_WIDTH + ENEMY_WIDTH;
+                mPosY = rand() % SCREEN_HEIGHT;
+            }
+
+            Dlen = sqrt(((mPosX - playerX) * (mPosX - playerX)) + ((mPosY - playerY) * (mPosY - playerY)));
+            mVelX = (mPosX - playerX)/Dlen;
+            mVelY = (mPosY - playerY)/Dlen;
+        }
+
+        void move(int playerX, int playerY) {
+            Dlen = sqrt(((mPosX - playerX) * (mPosX - playerX)) + ((mPosY - playerY) * (mPosY - playerY)));
+            mVelX = (mPosX - playerX)/Dlen;
+            mVelY = (mPosY - playerY)/Dlen;
+
+            if(mPosX != playerX && mPosY != playerY){
+                mPosX += -mVelX*ENEMY_VEL;
+                mPosY += -mVelY*ENEMY_VEL;
+            }
+        }
+
+        void render() {
+            SDL_Rect r;
+            r.w = ENEMY_WIDTH;
+            r.h = ENEMY_HEIGHT;
+            gEnemyTexture.render(mPosX, mPosY, &r);
+        }
+    private:
+        float mVelX, mVelY;
+};
+
 void close() {
     gPlayerTexture.free();
     SDL_DestroyRenderer(gRenderer);
@@ -236,8 +282,15 @@ int main(int argc, char* args[]){
     } else {
         gPlayerTexture.loadFromFile("images/dot.bmp");
         gProjectileTexture.loadFromFile("images/dot.bmp");
+        gEnemyTexture.loadFromFile("images/enemy.bmp");
 
         std::vector<Projectile> projectiles;
+
+        std::vector<Enemy> enemies;
+        for(int i = 0; i < ENEMY_AMOUNT; i++){
+            Enemy e(SCREEN_WIDTH/2, SCREEN_HEIGHT/2);
+            enemies.push_back(e);
+        }
 
         bool quit = false;
 
@@ -278,6 +331,11 @@ int main(int argc, char* args[]){
                 } else {
                     projectiles[i].render();
                 }
+            }
+
+            for(int i = 0; i < enemies.size(); i++){
+                enemies[i].move(player.mPosX + (player.PLAYER_WIDTH/2), player.mPosY + (player.PLAYER_HEIGHT/2));
+                enemies[i].render();
             }
 
             SDL_RenderPresent(gRenderer);
