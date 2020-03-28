@@ -1,21 +1,29 @@
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_image.h>
+#include <SDL2/SDL_ttf.h>
 #include <stdlib.h>
 #include <time.h>
 #include <stdio.h>
 #include <string>
 #include <math.h>
 #include <vector>
-
 #include <iostream>
+#include <cmath>
 
-const int SCREEN_WIDTH = 640;
-const int SCREEN_HEIGHT = 480;
+const int SCREEN_WIDTH = 1000;
+const int SCREEN_HEIGHT = 1000;
+const int SCREEN_FPS = 60;
+const int SCREEN_TICFKS_PER_FRAME = 1000 / SCREEN_FPS;
 
 SDL_Window* gWindow = NULL;
 SDL_Renderer* gRenderer = NULL;
+TTF_Font *gFont = NULL;
 
-const int ENEMY_AMOUNT = 10;
+const int ENEMY_AMOUNT = 30;
+
+bool shooting = false;
+
+bool automaticShooting = false;
 
 class LTexture {
 	public:
@@ -37,6 +45,15 @@ class LTexture {
             mHeight = loadedSurface->h;
             SDL_FreeSurface(loadedSurface);
             mTexture = newTexture;
+            return mTexture != NULL;
+        }
+        bool loadFromRenderedText(std::string textureText, SDL_Color textColor) {
+            free();
+            SDL_Surface* textSurface = TTF_RenderText_Solid(gFont, textureText.c_str(), textColor);
+            mTexture = SDL_CreateTextureFromSurface(gRenderer, textSurface);
+            mWidth = textSurface->w;
+            mHeight = textSurface->h;
+            SDL_FreeSurface(textSurface);
             return mTexture != NULL;
         }
 		void free() {
@@ -78,20 +95,85 @@ class LTexture {
 		int mHeight;
 };
 
+// class Ltimer {
+//     public: 
+//         LTimer() {
+//             mStartTicks = 0;
+//             mPausedTicks = 0;
+//             mPaused = false;
+//             mStarted = false;
+//         }
+//         void start() {
+//             mStarted = true;
+//             mPaused = false;
+//             mStartTicks = SDL_GetTicks();
+//             mPausedTicks = 0;
+//         }
+//         void stop() {
+//             mStarted = false;
+//             mPaused = false;
+//             mStartTicks = 0;
+//             mPausedTicks = 0;
+//         }
+//         void pause() {
+//             if(mStarted && !mPaused){
+//                 mPaused = true;
+//                 mPausedTicks = SDL_GetTicks() - mStartTicks;
+//                 mStartTicks = 0;
+//             }
+//         }
+//         void unpause() {
+//             if(mStarted && mPaused){
+//                 mPaused = false;
+//                 mStartTicks = SDL_GetTicks() - mPausedTicks;
+//                 mPausedTicks = 0;
+//             }
+//         }
+//         Uint32 getTicks() {
+//             Uint32 time = 0;
+//             if(mStarted){
+//                 if(mPaused){
+//                     time = mPausedTicks;
+//                 } else {
+//                     time = SDL_GetTicks() - mStartTicks;
+//                 }
+//             }
+//             return time;
+//         }
+//         bool isStarted(){
+//             return mStarted;
+//         }
+//         bool isPaused(){
+//             return mPaused && mStarted;
+//         }
+//     private:
+//         Uint32 mStartTicks;
+//         Uint32 mPausedTicks;
+//         bool mPaused;
+//         bool mStarted;
+// }
+
 LTexture gPlayerTexture;
 LTexture gProjectileTexture;
 LTexture gEnemyTexture;
 
+LTexture gTextTexture;
+LTexture gTextStyleTexture;
+
 class Projectile {
     public:
-        static const int PROJECTILE_WIDTH = 5;
-        static const int PROJECTILE_HEIGHT = 5;
-        static const int PROJECTILE_VEL = 12;
+        int PROJECTILE_WIDTH;
+        int PROJECTILE_HEIGHT;
+        int PROJECTILE_VEL;
         float mPosX, mPosY;
 
-    Projectile(int playerX, int playerY, int mouseX, int mouseY) {
-        mPosX = playerX;
-        mPosY = playerY;
+    Projectile(int playerX, int playerY, int playerW, int playerH, int mouseX, int mouseY, int width, int height, int vel) {
+        PROJECTILE_WIDTH = width;
+        PROJECTILE_HEIGHT = height;
+        PROJECTILE_VEL = vel;
+
+        mPosX = playerX + (playerW/2) - (width/2);
+        mPosY = playerY + (playerH/2) - (height/2);
 
         float Dlen = sqrt(((playerX - mouseX) * (playerX - mouseX)) + ((playerY - mouseY) * (playerY - mouseY)));
         mVelX = (playerX - mouseX)/Dlen;
@@ -120,13 +202,6 @@ class Projectile {
     private:
         float mVelX, mVelY;
 };
-
-bool mousePress(SDL_MouseButtonEvent& b){
-    if(b.button == SDL_BUTTON_LEFT){
-        return true;
-    }
-    return false;
-}
 
 class Player {
     public:
@@ -194,10 +269,10 @@ class Enemy {
         float Dlen;
 
         Enemy(int playerX, int playerY) {
-            if(rand() % 2 == 0){ // Vary X
+            if(rand() % 2 == 0){
                 mPosX = rand() % SCREEN_WIDTH;
                 mPosY = rand() % 2 == 0 ? -ENEMY_HEIGHT: SCREEN_HEIGHT + ENEMY_HEIGHT;
-            } else { // Vary Y
+            } else {
                 mPosX = rand() % 2 == 0 ? -ENEMY_WIDTH: SCREEN_WIDTH + ENEMY_WIDTH;
                 mPosY = rand() % SCREEN_HEIGHT;
             }
@@ -207,15 +282,45 @@ class Enemy {
             mVelY = (mPosY - playerY)/Dlen;
         }
 
-        void move(int playerX, int playerY) {
+        bool intersect(Projectile b){
+            float x1 = mPosX + ENEMY_WIDTH/2;
+            float y1 = mPosY + ENEMY_HEIGHT/2;
+            int r1 = ENEMY_WIDTH/2;
+
+            float x2 = b.mPosX + b.PROJECTILE_WIDTH/2;
+            float y2 = b.mPosY + b.PROJECTILE_HEIGHT/2;
+            int r2 = b.PROJECTILE_WIDTH/2;
+
+            if((x2-x1)*(x2-x1) + (y2-y1)*(y2-y1) <= (r1+r2)*(r1+r2)){
+                return true;
+            }
+
+            return false;
+        }
+
+        bool checkPlayerHit(Player b){
+            float x1 = mPosX + ENEMY_WIDTH/2;
+            float y1 = mPosY + ENEMY_HEIGHT/2;
+            int r1 = ENEMY_WIDTH/2;
+
+            float x2 = b.mPosX + b.PLAYER_WIDTH/2;
+            float y2 = b.mPosY + b.PLAYER_HEIGHT/2;
+            int r2 = b.PLAYER_WIDTH/2;
+
+            if((x2-x1)*(x2-x1) + (y2-y1)*(y2-y1) <= (r1+r2)*(r1+r2)){
+                return true;
+            }
+
+            return false;
+        }                             
+
+        void move(int playerX, int playerY, int playerR) {
             Dlen = sqrt(((mPosX - playerX) * (mPosX - playerX)) + ((mPosY - playerY) * (mPosY - playerY)));
             mVelX = (mPosX - playerX)/Dlen;
             mVelY = (mPosY - playerY)/Dlen;
 
-            if(mPosX != playerX && mPosY != playerY){
-                mPosX += -mVelX*ENEMY_VEL;
-                mPosY += -mVelY*ENEMY_VEL;
-            }
+            mPosX += -mVelX*ENEMY_VEL;
+            mPosY += -mVelY*ENEMY_VEL;
         }
 
         void render() {
@@ -228,19 +333,68 @@ class Enemy {
         float mVelX, mVelY;
 };
 
+bool mousePress(SDL_MouseButtonEvent& b){
+    if(b.button == SDL_BUTTON_LEFT){
+        return true;
+    }
+    return false;
+}
+
+Projectile createProjectile(Player player, int shootingStyle, int shootingStyles[2][4], std::vector<Projectile> projectiles){
+    int mouseX, mouseY;
+    SDL_GetMouseState(&mouseX, &mouseY);
+    Projectile p(
+        player.mPosX, 
+        player.mPosY, 
+        player.PLAYER_WIDTH,
+        player.PLAYER_HEIGHT,
+        mouseX, 
+        mouseY, 
+        shootingStyles[shootingStyle][0], 
+        shootingStyles[shootingStyle][1], 
+        shootingStyles[shootingStyle][2]
+    );
+    return p;
+}
+
+bool loadMedia(){
+    bool success = true;
+    gFont = TTF_OpenFont("fonts/OpenSans-Regular.ttf", 28);
+    if(gFont == NULL){
+        printf("Failed to load font! SDL_ttf Error: %s\n", TTF_GetError());
+        success = false;
+    } else {
+        SDL_Color textColor = {0, 0, 0};
+        if( !gTextTexture.loadFromRenderedText( "The quick brown fox jumps over the lazy dog", textColor ) || 
+            !gTextStyleTexture.loadFromRenderedText( "The quick brown fox jumps over the lazy dog", textColor ) 
+            ) {
+            printf( "Failed to render text texture!\n" );
+            success = false;
+        }
+    }
+
+    return success;
+}
+
 void close() {
     gPlayerTexture.free();
+    gProjectileTexture.free();
+    gEnemyTexture.free();
+    gTextTexture.free();
+    gTextStyleTexture.free();
+    TTF_CloseFont(gFont);
+    gFont = NULL;
     SDL_DestroyRenderer(gRenderer);
     SDL_DestroyWindow(gWindow);
     gWindow = NULL;
     gRenderer = NULL;
+    TTF_Quit();
     IMG_Quit();
     SDL_Quit();
 }
 
 bool init() {
 	bool success = true;
-
 	if(SDL_Init( SDL_INIT_VIDEO ) < 0) {
 		printf( "SDL could not initialize! SDL Error: %s\n", SDL_GetError() );
 		success = false;
@@ -262,27 +416,48 @@ bool init() {
 			}
 			else {
 				SDL_SetRenderDrawColor( gRenderer, 0xFF, 0xFF, 0xFF, 0xFF );
-
 				int imgFlags = IMG_INIT_PNG;
 				if(!(IMG_Init(imgFlags) & imgFlags)) {
 					printf( "SDL_image could not initialize! SDL_image Error: %s\n", IMG_GetError() );
 					success = false;
 				}
+
+                if(TTF_Init() == -1){
+                    printf("SDL_ttf could not initialize! SDL_ttf Error: %s\n", TTF_GetError() );
+                    success = false;
+                }
 			}
 		}
 	}
-
 	return success;
 }
+
+int score = 0;
 
 int main(int argc, char* args[]){
     srand((unsigned)time(NULL));
     if(!init()){
         printf("Failed to initialize!\n");
+    } else if(!loadMedia()){
+        printf("Failed to load media!\n");
     } else {
         gPlayerTexture.loadFromFile("images/dot.bmp");
         gProjectileTexture.loadFromFile("images/dot.bmp");
         gEnemyTexture.loadFromFile("images/enemy.bmp");
+
+        std::string shootingStyleNames[3]{
+            "Lightning",
+            "Rocket",
+            "Ultimate"
+        };
+
+        int shootingStyles[sizeof(shootingStyleNames)/sizeof(shootingStyleNames[0])][4]{
+            {5, 5, 20, 1},
+            {50, 50, 6, 0},
+            {50, 50, 12, 1}
+        };
+
+        int shootingStyle = 1;
 
         std::vector<Projectile> projectiles;
 
@@ -298,29 +473,50 @@ int main(int argc, char* args[]){
 
         Player player;
 
+        SDL_Color c;
+        c.r = 0;
+        c.g = 0;
+        c.b = 0;
+
         while(!quit){
             while(SDL_PollEvent(&e) != 0){
                 if(e.type == SDL_QUIT){
                     quit = true;
                 }
-                if(e.type == SDL_MOUSEBUTTONDOWN){
-                    int mouseX, mouseY;
-                    SDL_GetMouseState(&mouseX, &mouseY);
 
+                if(e.type == SDL_MOUSEBUTTONDOWN){
                     if(mousePress(e.button)){
-                        Projectile p(player.mPosX + (player.PLAYER_WIDTH/2), player.mPosY + (player.PLAYER_HEIGHT/2), mouseX, mouseY);
-                        projectiles.push_back(p);
-                 
+                        if(shootingStyles[shootingStyle][3]){
+                            shooting = true;
+                        } else {
+                            projectiles.push_back(createProjectile(player, shootingStyle, shootingStyles, projectiles));
+                        }
+                        
+                    } 
+                } else if(e.type == SDL_MOUSEBUTTONUP && shootingStyles[shootingStyle][3]){
+                    shooting = false;
+                }
+
+                if(e.type == SDL_KEYDOWN && e.key.repeat == 0){
+                    switch(e.key.keysym.sym){
+                        case SDLK_r: shootingStyle++; if(shootingStyle >= sizeof(shootingStyles)/sizeof(shootingStyles[0])) shootingStyle = 0; break;
                     }
                 }
 
                 player.handleEvent(e);
             }
 
+            if(shooting && shootingStyles[shootingStyle][3]){
+                projectiles.push_back(createProjectile(player, shootingStyle, shootingStyles, projectiles));
+            }
+
             player.move();
 
             SDL_SetRenderDrawColor(gRenderer, 0xFF, 0xFF, 0xFF, 0xFF);
             SDL_RenderClear(gRenderer);
+
+            gTextTexture.loadFromRenderedText(std::to_string(score), c);
+            gTextStyleTexture.loadFromRenderedText(shootingStyleNames[shootingStyle], c);
 
             player.render();
 
@@ -334,14 +530,38 @@ int main(int argc, char* args[]){
             }
 
             for(int i = 0; i < enemies.size(); i++){
-                enemies[i].move(player.mPosX + (player.PLAYER_WIDTH/2), player.mPosY + (player.PLAYER_HEIGHT/2));
+                enemies[i].move(player.mPosX + (player.PLAYER_WIDTH/2), player.mPosY + (player.PLAYER_HEIGHT/2), player.PLAYER_WIDTH/2);
                 enemies[i].render();
+                if(enemies[i].checkPlayerHit(player)){
+                    score -= 5;
+                    enemies.erase(enemies.begin()+i);
+                } else {
+                    for(int j = 0; j < projectiles.size(); j++){
+                        if(enemies[i].intersect(projectiles[j])){
+                            score++;
+                            enemies.erase(enemies.begin()+i);
+                            if(shootingStyle != 1) projectiles.erase(projectiles.begin()+j);
+                        }
+                    }
+                }
             }
+
+            for(int i = enemies.size(); i < ENEMY_AMOUNT; i++){
+                Enemy e(SCREEN_WIDTH/2, SCREEN_HEIGHT/2);
+                enemies.push_back(e);
+            }
+
+            if(score < 0){
+                score = 0;
+            }
+
+            gTextTexture.render(0, 0);
+            gTextStyleTexture.render(SCREEN_WIDTH/2 - (gTextStyleTexture.getWidth()/2), 0);
+
 
             SDL_RenderPresent(gRenderer);
         }
     }
     close();
-
     return 0;
 }
