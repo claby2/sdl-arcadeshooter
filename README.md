@@ -1,1 +1,1 @@
-# sdl-game
+# sdl-arcadeshooter
